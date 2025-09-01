@@ -1,39 +1,48 @@
-import { getAssetFromKV } from '@cloudflare/kv-asset-handler';
-
 export default {
-  async fetch(request: Request, env: any, ctx: any): Promise<Response> {
+  async fetch(request: Request, env: any): Promise<Response> {
     const url = new URL(request.url);
-    
+    let pathname = url.pathname;
+
+    // Handle root path - serve page.html as home page
+    if (pathname === '/') {
+      pathname = '/page.html';
+    }
+
+    // Handle clean URLs - if no extension, try /pathname/page.html
+    if (!pathname.includes('.') && !pathname.endsWith('/')) {
+      pathname = pathname + '/page.html';
+    }
+
     try {
-      // Handle root path - serve page.html as home page
-      if (url.pathname === '/') {
-        const homeRequest = new Request(url.origin + '/page.html', request);
-        return await getAssetFromKV({
-          request: homeRequest,
-          waitUntil: ctx.waitUntil,
+      // Use the __STATIC_CONTENT KV namespace directly
+      const assetKey = pathname.startsWith('/') ? pathname.slice(1) : pathname;
+      const asset = await env.__STATIC_CONTENT.get(assetKey, { type: 'arrayBuffer' });
+      
+      if (asset) {
+        const contentType = getContentType(pathname);
+        return new Response(asset, {
+          headers: {
+            'Content-Type': contentType,
+            'Cache-Control': 'public, max-age=86400',
+          },
         });
       }
 
-      // Handle clean URLs - try /pathname/page.html first
-      if (!url.pathname.includes('.')) {
-        try {
-          const cleanUrlRequest = new Request(url.origin + url.pathname + '/page.html', request);
-          return await getAssetFromKV({
-            request: cleanUrlRequest,
-            waitUntil: ctx.waitUntil,
-          });
-        } catch (error) {
-          // Continue to serve the original request
-        }
-      }
-
-      // Serve the original request
-      return await getAssetFromKV({
-        request,
-        waitUntil: ctx.waitUntil,
-      });
+      return new Response('Not Found', { status: 404 });
     } catch (error) {
-      return new Response(`Not Found: ${url.pathname}`, { status: 404 });
+      return new Response('Internal Server Error', { status: 500 });
     }
   },
 };
+
+function getContentType(pathname: string): string {
+  if (pathname.endsWith('.html')) return 'text/html';
+  if (pathname.endsWith('.css')) return 'text/css';
+  if (pathname.endsWith('.js')) return 'application/javascript';
+  if (pathname.endsWith('.json')) return 'application/json';
+  if (pathname.endsWith('.png')) return 'image/png';
+  if (pathname.endsWith('.jpg') || pathname.endsWith('.jpeg')) return 'image/jpeg';
+  if (pathname.endsWith('.gif')) return 'image/gif';
+  if (pathname.endsWith('.svg')) return 'image/svg+xml';
+  return 'text/plain';
+}
