@@ -1,5 +1,7 @@
+import { getAssetFromKV } from '@cloudflare/kv-asset-handler';
+
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: any, ctx: any): Promise<Response> {
     const url = new URL(request.url);
     let pathname = url.pathname;
 
@@ -14,24 +16,50 @@ export default {
     }
 
     try {
-      // Try to fetch the asset from the ASSETS binding
-      const assetResponse = await env.ASSETS.fetch(new URL(pathname, request.url));
-      
-      if (assetResponse.status === 404) {
-        // If not found, try with .html extension
-        const htmlPath = pathname.endsWith('/') ? pathname + 'page.html' : pathname + '.html';
-        const htmlResponse = await env.ASSETS.fetch(new URL(htmlPath, request.url));
-        
-        if (htmlResponse.status === 404) {
-          return new Response('Not Found', { status: 404 });
+      // Create a new request with the modified pathname
+      const modifiedRequest = new Request(
+        new URL(pathname, request.url).toString(),
+        {
+          method: request.method,
+          headers: request.headers,
         }
-        
-        return htmlResponse;
-      }
+      );
 
-      return assetResponse;
+      return await getAssetFromKV(
+        {
+          request: modifiedRequest,
+          waitUntil: ctx.waitUntil,
+        },
+        {
+          ASSET_NAMESPACE: env.__STATIC_CONTENT,
+          ASSET_MANIFEST: env.__STATIC_CONTENT_MANIFEST,
+        }
+      );
     } catch (error) {
-      return new Response('Internal Server Error', { status: 500 });
+      // If asset not found, try with .html extension
+      try {
+        const htmlPath = pathname.endsWith('/') ? pathname + 'page.html' : pathname + '.html';
+        const htmlRequest = new Request(
+          new URL(htmlPath, request.url).toString(),
+          {
+            method: request.method,
+            headers: request.headers,
+          }
+        );
+
+        return await getAssetFromKV(
+          {
+            request: htmlRequest,
+            waitUntil: ctx.waitUntil,
+          },
+          {
+            ASSET_NAMESPACE: env.__STATIC_CONTENT,
+            ASSET_MANIFEST: env.__STATIC_CONTENT_MANIFEST,
+          }
+        );
+      } catch (htmlError) {
+        return new Response('Not Found', { status: 404 });
+      }
     }
   },
 };
